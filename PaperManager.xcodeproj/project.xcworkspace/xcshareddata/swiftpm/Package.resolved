@@ -1,0 +1,42 @@
+{
+  "originHash" : "82d0263847975073287d6aba345245e93d9403e4515855537115506c4ffe43f0",
+  "pins" : [
+    {
+      "identity" : "llm.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/eastriverlee/LLM.swift",
+      "state" : {
+        "revision" : "e62b90f067ae89d2361c2dccae4ffa448a7b1d54",
+        "version" : "1.7.1"
+      }
+    },
+    {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "revision" : "939b2ad47dab82e038d57e2554879d9a60f67e9e",
+        "version" : "0.23.1"
+      }
+    },
+    {
+      "identity" : "openai",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/MacPaw/OpenAI",
+      "state" : {
+        "revision" : "7eef412b26b0b2af6add548bb60f25f306b41ee2",
+        "version" : "0.4.1"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "e0ec0f5f3af6f3e4d5e7a19d2af26b481acb6ba8",
+        "version" : "1.0.3"
+      }
+    }
+  ],
+  "version" : 3
+}
