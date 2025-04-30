@@ -59,6 +59,8 @@
 - To add more local models, add their `.gguf` files to the `Resources` folder in Xcode and update the code to allow selection.
 - Currently, only Gemma-3-4B-IT-Q4_0 is enabled for simplicity and reliability.
 
+**Note:** The `Resources` folder is not tracked in version control because it contains large `.gguf` files. The model is downloaded from the credited URL.
+
 ---
 
 ## Resolving Broken Symlinks for `llama.framework`
