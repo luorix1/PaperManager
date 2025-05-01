@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var originalPDFPath: String?
     @State private var copiedPDFPath: String?
     @State private var pendingDeleteURL: URL?
+    @State private var analyzingCount: Int = 0
     
     enum FilterType: String, CaseIterable {
         case name = "Name"
@@ -129,7 +130,23 @@ struct ContentView: View {
                 secondaryButton: .cancel(Text("Keep Both"))
             )
         }
-        .overlay(analyzingOverlay)
+        .overlay(alignment: .topTrailing) {
+            if analyzingCount > 0 {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Analyzing \(analyzingCount) PDF\(analyzingCount > 1 ? "s" : "")...")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                }
+                .padding(10)
+                .background(.ultraThinMaterial)
+                .cornerRadius(10)
+                .shadow(radius: 4)
+                .padding(.top, 8)
+                .padding(.trailing, 16)
+            }
+        }
     }
     
     private func importPDF() {
@@ -142,31 +159,29 @@ struct ContentView: View {
         if panel.runModal() == .OK {
             guard let url = panel.url else { return }
             print("[importPDF] User selected file: \(url.path)")
-            isAnalyzingPDF = true
-            print("[importPDF] isAnalyzingPDF set to true")
+            analyzingCount += 1
             Task {
                 await processAndContinueImport(url: url)
             }
         }
     }
     
-    /// Wrapper to handle both error and success for PDF processing
     private func processAndContinueImport(url: URL) async {
         var didError = false
         await PDFProcessor.shared.processPDF(at: url, onError: { msg in
             DispatchQueue.main.async {
                 self.errorMessage = msg
-                self.isAnalyzingPDF = false
                 print("[processAndContinueImport] Error: \(msg)")
                 didError = true
+                self.analyzingCount = max(0, self.analyzingCount - 1)
             }
         })
         // If no error, continue
         if !didError {
             DispatchQueue.main.async {
-                self.isAnalyzingPDF = false
                 print("[processAndContinueImport] Success, calling copyAndPromptForPDF")
                 self.copyAndPromptForPDF(at: url)
+                self.analyzingCount = max(0, self.analyzingCount - 1)
             }
         }
     }
