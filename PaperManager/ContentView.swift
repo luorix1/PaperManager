@@ -51,8 +51,8 @@ struct ContentView: View {
                 NavigationSplitView {
                     PaperListView(searchText: $searchText, filterType: $filterType, selectedPaperID: $selectedPaperID)
                 } detail: {
-                    if let paperID = selectedPaperID, let paper = fetchPaper(with: paperID) {
-                        PaperDetailView(paper: paper)
+                    if let paperID = selectedPaperID {
+                        PaperDetailView(paperID: paperID)
                     } else {
                         Text("Select a paper")
                     }
@@ -158,13 +158,18 @@ struct ContentView: View {
         
         if panel.runModal() == .OK {
             let urls = panel.urls
-            for url in urls {
-                print("[importPDF] User selected file: \(url.path)")
-                analyzingCount += 1
+            if !urls.isEmpty {
+                analyzingCount += urls.count
                 Task {
-                    await copyAndProcessPDF(originalURL: url)
+                    await processBatchPDFs(urls: urls)
                 }
             }
+        }
+    }
+    
+    private func processBatchPDFs(urls: [URL]) async {
+        for url in urls {
+            await copyAndProcessPDF(originalURL: url)
         }
     }
     
@@ -259,13 +264,33 @@ struct PaperListView: View {
     }
     
     var body: some View {
-        print("[PaperListView] selectedPaperID: \(String(describing: selectedPaperID))")
-        return List(selection: $selectedPaperID) {
+        if let selectedPaperID = selectedPaperID,
+           let selectedPaper = try? viewContext.existingObject(with: selectedPaperID),
+           let uuid = selectedPaper.value(forKey: "id") as? UUID {
+            print("[PaperListView] selectedPaperID: \(uuid.uuidString)")
+        } else {
+            print("[PaperListView] selectedPaperID: nil")
+        }
+        return List {
             ForEach(filteredPapers, id: \.objectID) { paper in
-                NavigationLink {
-                    PaperDetailView(paper: paper)
-                } label: {
+                let isSelected = selectedPaperID == paper.objectID
+                Button(action: {
+                    if isSelected {
+                        selectedPaperID = nil
+                    } else {
+                        let newID = paper.objectID
+                        selectedPaperID = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            selectedPaperID = newID
+                        }
+                    }
+                }) {
                     VStack(alignment: .leading) {
+                        if let uuid = paper.value(forKey: "id") as? UUID {
+                            Text(uuid.uuidString)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
                         Text(paper.value(forKey: "name") as? String ?? "Untitled")
                             .font(.headline)
                         Text(paper.value(forKey: "authors") as? String ?? "Unknown authors")
@@ -277,17 +302,22 @@ struct PaperListView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .padding(.vertical, 4)
+                    .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+                    .cornerRadius(6)
                 }
-                .tag(paper.objectID)
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }
 }
 
 struct PaperDetailView: View {
-    let paper: NSManagedObject
+    let paperID: NSManagedObjectID
+    @Environment(\.managedObjectContext) private var viewContext
+    @State private var paper: NSManagedObject?
     @State private var pdfDocument: PDFDocument?
-    
+
     var body: some View {
         VStack {
             if let pdfDocument = pdfDocument {
@@ -297,19 +327,20 @@ struct PaperDetailView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .onAppear {
-            loadPDF()
-        }
-        .onChange(of: paper) { _ in
-            loadPDF()
+        .onAppear(perform: loadPaper)
+        .onChange(of: paperID) { _ in
+            loadPaper()
         }
     }
-    
-    private func loadPDF() {
-        if let path = paper.value(forKey: "filePath") as? String {
-            pdfDocument = PDFDocument(url: URL(fileURLWithPath: path))
+
+    private func loadPaper() {
+        if let fetchedPaper = try? viewContext.existingObject(with: paperID),
+           let path = fetchedPaper.value(forKey: "filePath") as? String {
+            self.paper = fetchedPaper
+            self.pdfDocument = PDFDocument(url: URL(fileURLWithPath: path))
         } else {
-            pdfDocument = nil
+            self.paper = nil
+            self.pdfDocument = nil
         }
     }
 }
