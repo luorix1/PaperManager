@@ -16,6 +16,10 @@ struct ContentView: View {
     @State private var showDatabaseView = false
     @State private var errorMessage: String? = nil
     @State private var isAnalyzingPDF = false
+    @State private var showDeletePrompt = false
+    @State private var originalPDFPath: String?
+    @State private var copiedPDFPath: String?
+    @State private var pendingDeleteURL: URL?
     
     enum FilterType: String, CaseIterable {
         case name = "Name"
@@ -105,6 +109,26 @@ struct ContentView: View {
                 dismissButton: .default(Text("OK")) { errorMessage = nil }
             )
         }
+        .alert(isPresented: $showDeletePrompt) {
+            Alert(
+                title: Text("PDF Imported"),
+                message: Text("""
+                    The PDF has been copied to:
+                    \(copiedPDFPath ?? "")
+
+                    Original file:
+                    \(originalPDFPath ?? "")
+
+                    Do you want to delete the original file to save space?
+                    """),
+                primaryButton: .destructive(Text("Delete Original")) {
+                    if let url = pendingDeleteURL {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                },
+                secondaryButton: .cancel(Text("Keep Both"))
+            )
+        }
         .overlay(analyzingOverlay)
     }
     
@@ -117,13 +141,32 @@ struct ContentView: View {
         
         if panel.runModal() == .OK {
             guard let url = panel.url else { return }
+            print("[importPDF] User selected file: \(url.path)")
             isAnalyzingPDF = true
+            print("[importPDF] isAnalyzingPDF set to true")
             Task {
-                await PDFProcessor.shared.processPDF(at: url) { msg in
-                    errorMessage = msg
-                    isAnalyzingPDF = false
-                }
-                isAnalyzingPDF = false
+                await processAndContinueImport(url: url)
+            }
+        }
+    }
+    
+    /// Wrapper to handle both error and success for PDF processing
+    private func processAndContinueImport(url: URL) async {
+        var didError = false
+        await PDFProcessor.shared.processPDF(at: url, onError: { msg in
+            DispatchQueue.main.async {
+                self.errorMessage = msg
+                self.isAnalyzingPDF = false
+                print("[processAndContinueImport] Error: \(msg)")
+                didError = true
+            }
+        })
+        // If no error, continue
+        if !didError {
+            DispatchQueue.main.async {
+                self.isAnalyzingPDF = false
+                print("[processAndContinueImport] Success, calling copyAndPromptForPDF")
+                self.copyAndPromptForPDF(at: url)
             }
         }
     }
@@ -138,6 +181,37 @@ struct ContentView: View {
     
     private func fetchPaper(with id: NSManagedObjectID) -> NSManagedObject? {
         try? viewContext.existingObject(with: id)
+    }
+    
+    func copyAndPromptForPDF(at url: URL) {
+        print("[copyAndPromptForPDF] Called with url: \(url.path)")
+        let fileManager = FileManager.default
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let appFolderURL = documentsURL.appendingPathComponent("PaperManager")
+        
+        if !fileManager.fileExists(atPath: appFolderURL.path) {
+            print("[copyAndPromptForPDF] Creating app folder at: \(appFolderURL.path)")
+            try? fileManager.createDirectory(at: appFolderURL, withIntermediateDirectories: true, attributes: nil)
+        }
+        
+        let targetURL = appFolderURL.appendingPathComponent(url.lastPathComponent)
+        do {
+            if fileManager.fileExists(atPath: targetURL.path) {
+                print("[copyAndPromptForPDF] Removing existing file at: \(targetURL.path)")
+                try fileManager.removeItem(at: targetURL)
+            }
+            try fileManager.copyItem(at: url, to: targetURL)
+            print("[copyAndPromptForPDF] Copied file to: \(targetURL.path)")
+            
+            self.originalPDFPath = url.path
+            self.copiedPDFPath = targetURL.path
+            self.pendingDeleteURL = url
+            self.showDeletePrompt = true
+            print("[copyAndPromptForPDF] showDeletePrompt set to true")
+        } catch {
+            print("[copyAndPromptForPDF] Error copying PDF: \(error)")
+            // Optionally show error to user
+        }
     }
 }
 
