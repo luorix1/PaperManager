@@ -151,36 +151,65 @@ struct ContentView: View {
     
     private func importPDF() {
         let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.pdf]
         
         if panel.runModal() == .OK {
-            guard let url = panel.url else { return }
-            print("[importPDF] User selected file: \(url.path)")
-            analyzingCount += 1
-            Task {
-                await processAndContinueImport(url: url)
+            let urls = panel.urls
+            for url in urls {
+                print("[importPDF] User selected file: \(url.path)")
+                analyzingCount += 1
+                Task {
+                    await copyAndProcessPDF(originalURL: url)
+                }
             }
         }
     }
     
-    private func processAndContinueImport(url: URL) async {
+    private func copyAndProcessPDF(originalURL: URL) async {
+        // Copy PDF to app folder first
+        let fileManager = FileManager.default
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let appFolderURL = documentsURL.appendingPathComponent("PaperManager")
+        if !fileManager.fileExists(atPath: appFolderURL.path) {
+            try? fileManager.createDirectory(at: appFolderURL, withIntermediateDirectories: true, attributes: nil)
+        }
+        let targetURL = appFolderURL.appendingPathComponent(originalURL.lastPathComponent)
+        do {
+            if fileManager.fileExists(atPath: targetURL.path) {
+                try fileManager.removeItem(at: targetURL)
+            }
+            try fileManager.copyItem(at: originalURL, to: targetURL)
+            print("[copyAndProcessPDF] Copied file to: \(targetURL.path)")
+        } catch {
+            print("[copyAndProcessPDF] Error copying PDF: \(error)")
+            DispatchQueue.main.async {
+                self.errorMessage = "Failed to copy PDF: \(error.localizedDescription)"
+                self.analyzingCount = max(0, self.analyzingCount - 1)
+            }
+            return
+        }
+        
+        // Now process the PDF at the copied location
         var didError = false
-        await PDFProcessor.shared.processPDF(at: url, onError: { msg in
+        await PDFProcessor.shared.processPDF(at: targetURL, onError: { msg in
             DispatchQueue.main.async {
                 self.errorMessage = msg
-                print("[processAndContinueImport] Error: \(msg)")
+                print("[copyAndProcessPDF] Error: \(msg)")
                 didError = true
                 self.analyzingCount = max(0, self.analyzingCount - 1)
             }
         })
-        // If no error, continue
+        // If no error, show prompt to delete original
         if !didError {
             DispatchQueue.main.async {
-                print("[processAndContinueImport] Success, calling copyAndPromptForPDF")
-                self.copyAndPromptForPDF(at: url)
+                print("[copyAndProcessPDF] Success, showing delete prompt")
+                self.originalPDFPath = originalURL.path
+                self.copiedPDFPath = targetURL.path
+                self.pendingDeleteURL = originalURL
+                self.showDeletePrompt = true
                 self.analyzingCount = max(0, self.analyzingCount - 1)
             }
         }
@@ -196,37 +225,6 @@ struct ContentView: View {
     
     private func fetchPaper(with id: NSManagedObjectID) -> NSManagedObject? {
         try? viewContext.existingObject(with: id)
-    }
-    
-    func copyAndPromptForPDF(at url: URL) {
-        print("[copyAndPromptForPDF] Called with url: \(url.path)")
-        let fileManager = FileManager.default
-        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let appFolderURL = documentsURL.appendingPathComponent("PaperManager")
-        
-        if !fileManager.fileExists(atPath: appFolderURL.path) {
-            print("[copyAndPromptForPDF] Creating app folder at: \(appFolderURL.path)")
-            try? fileManager.createDirectory(at: appFolderURL, withIntermediateDirectories: true, attributes: nil)
-        }
-        
-        let targetURL = appFolderURL.appendingPathComponent(url.lastPathComponent)
-        do {
-            if fileManager.fileExists(atPath: targetURL.path) {
-                print("[copyAndPromptForPDF] Removing existing file at: \(targetURL.path)")
-                try fileManager.removeItem(at: targetURL)
-            }
-            try fileManager.copyItem(at: url, to: targetURL)
-            print("[copyAndPromptForPDF] Copied file to: \(targetURL.path)")
-            
-            self.originalPDFPath = url.path
-            self.copiedPDFPath = targetURL.path
-            self.pendingDeleteURL = url
-            self.showDeletePrompt = true
-            print("[copyAndPromptForPDF] showDeletePrompt set to true")
-        } catch {
-            print("[copyAndPromptForPDF] Error copying PDF: \(error)")
-            // Optionally show error to user
-        }
     }
 }
 
