@@ -21,12 +21,19 @@ struct ContentView: View {
     @State private var copiedPDFPath: String?
     @State private var pendingDeleteURL: URL?
     @State private var analyzingCount: Int = 0
+    @State private var appMode: AppMode = .list
     
     enum FilterType: String, CaseIterable {
         case name = "Name"
         case authors = "Authors"
         case publication = "Publication"
         case year = "Year"
+    }
+    
+    enum AppMode: String, CaseIterable {
+        case list = "List"
+        case table = "Table"
+        case chat = "Chat"
     }
     
     private var analyzingOverlay: some View {
@@ -45,9 +52,8 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if showDatabaseView {
-                DatabaseView()
-            } else {
+            switch appMode {
+            case .list:
                 NavigationSplitView {
                     PaperListView(searchText: $searchText, filterType: $filterType, selectedPaperID: $selectedPaperID)
                 } detail: {
@@ -57,10 +63,23 @@ struct ContentView: View {
                         Text("Select a paper")
                     }
                 }
+            case .table:
+                DatabaseView()
+            case .chat:
+                ChatModeView() // Dummy for now
             }
         }
         .navigationTitle("Paper Manager")
         .toolbar {
+            ToolbarItem {
+                Picker("Mode", selection: $appMode) {
+                    ForEach(AppMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
             ToolbarItem {
                 Button(action: importPDF) {
                     Label("Import PDF", systemImage: "doc.badge.plus")
@@ -480,6 +499,17 @@ struct DatabaseView: View {
                 .padding(.horizontal, 4)
                 .lineLimit(1)
                 .truncationMode(.tail)
+        }
+    }
+}
+
+struct ChatModeView: View {
+    var body: some View {
+        VStack {
+            Text("Chat Mode (Coming Soon)")
+                .font(.title)
+                .padding()
+            Spacer()
         }
     }
 } 
