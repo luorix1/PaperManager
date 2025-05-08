@@ -259,16 +259,21 @@ class PDFProcessor {
         paper.setValue(pdfPath, forKey: "filePath")
         paper.setValue(false, forKey: "readStatus")
         
-        // Generate and save embedding
+        // FIXME: Embedding generation temporarily disabled
+        // Will be re-implemented for retrieval if users require it
+        /*
         Task {
             if let embedding = try? await generateEmbedding(for: metadata.summary ?? "") {
                 paper.setValue(Data(bytes: embedding, count: embedding.count * MemoryLayout<Float>.size), forKey: "embedding")
             }
         }
+        */
         
         PersistenceController.shared.save()
     }
     
+    // FIXME: This function is kept for future implementation of semantic search
+    // Will be re-implemented for retrieval if users require it
     func generateEmbedding(for text: String) async throws -> [Float] {
         guard let openAI = openAI else {
             throw NSError(domain: "PDFProcessor", code: 1, userInfo: [NSLocalizedDescriptionKey: "OpenAI API key not set"])

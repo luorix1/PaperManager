@@ -13,7 +13,6 @@ struct ContentView: View {
         }
     }
     @State private var showDeleteConfirmation = false
-    @State private var showDatabaseView = false
     @State private var errorMessage: ErrorMessage? = nil
     @State private var isAnalyzingPDF = false
     @State private var showDeletePrompt = false
@@ -33,7 +32,9 @@ struct ContentView: View {
     enum AppMode: String, CaseIterable {
         case list = "List"
         case table = "Table"
-        case chat = "Chat"
+        // FIXME: Chat mode temporarily disabled
+        // Will be re-implemented in the future if users require it
+        // case chat = "Chat"
     }
     
     private var analyzingOverlay: some View {
@@ -65,8 +66,12 @@ struct ContentView: View {
                 }
             case .table:
                 DatabaseView()
+            // FIXME: Chat mode temporarily disabled
+            // Will be re-implemented in the future if users require it
+            /*
             case .chat:
                 ChatModeView()
+            */
             }
         }
         .navigationTitle("Paper Manager")
@@ -93,11 +98,6 @@ struct ContentView: View {
                     Label("Delete Paper", systemImage: "trash")
                 }
                 .disabled(selectedPaperID == nil)
-            }
-            ToolbarItem {
-                Button(action: { showDatabaseView.toggle() }) {
-                    Label("Database View", systemImage: "tablecells")
-                }
             }
             ToolbarItem {
                 Menu {
