@@ -11,7 +11,7 @@ struct SettingsView: View {
     @State private var downloadProgress: Double = 0
     @State private var downloadError: Bool = false
     @State private var directoryError: String? = nil
-    @State private var errorMessage: String? = nil
+    @State private var errorMessage: ErrorMessage? = nil
     @Environment(\.presentationMode) var presentationMode
 
     var body: some View {
@@ -80,10 +80,10 @@ struct SettingsView: View {
         }
         .padding()
         .frame(width: 400)
-        .alert(item: $errorMessage) { msg in
+        .alert(item: $errorMessage) { error in
             Alert(
                 title: Text("Error"),
-                message: Text(msg),
+                message: Text(error.message),
                 dismissButton: .default(Text("OK")) { errorMessage = nil }
             )
         }
@@ -93,7 +93,7 @@ struct SettingsView: View {
     func importPDF(url: URL) {
         Task {
             await PDFProcessor.shared.processPDF(at: url) { msg in
-                errorMessage = msg
+                errorMessage = ErrorMessage(message: msg)
             }
         }
     }

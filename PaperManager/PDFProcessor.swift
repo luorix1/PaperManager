@@ -4,10 +4,6 @@ import OpenAI
 import OSLog
 import LLM
 
-extension String: Identifiable {
-    public var id: String { self }
-}
-
 class PDFProcessor {
     static let shared = PDFProcessor()
     private let logger = Logger(subsystem: "com.papermanager.app", category: "PDFProcessor")
@@ -263,7 +259,32 @@ class PDFProcessor {
         paper.setValue(pdfPath, forKey: "filePath")
         paper.setValue(false, forKey: "readStatus")
         
+        // Generate and save embedding
+        Task {
+            if let embedding = try? await generateEmbedding(for: metadata.summary ?? "") {
+                paper.setValue(Data(bytes: embedding, count: embedding.count * MemoryLayout<Float>.size), forKey: "embedding")
+            }
+        }
+        
         PersistenceController.shared.save()
+    }
+    
+    func generateEmbedding(for text: String) async throws -> [Float] {
+        guard let openAI = openAI else {
+            throw NSError(domain: "PDFProcessor", code: 1, userInfo: [NSLocalizedDescriptionKey: "OpenAI API key not set"])
+        }
+        
+        let query = EmbeddingsQuery(
+            input: .string(text),
+            model: "text-embedding-3-small"
+        )
+        
+        let result = try await openAI.embeddings(query: query)
+        guard let embedding = result.data.first?.embedding else {
+            throw NSError(domain: "PDFProcessor", code: 1, userInfo: [NSLocalizedDescriptionKey: "No embedding returned"])
+        }
+        
+        return embedding.map { Float($0) }
     }
 }
 

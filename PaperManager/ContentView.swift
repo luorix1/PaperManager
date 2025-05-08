@@ -14,7 +14,7 @@ struct ContentView: View {
     }
     @State private var showDeleteConfirmation = false
     @State private var showDatabaseView = false
-    @State private var errorMessage: String? = nil
+    @State private var errorMessage: ErrorMessage? = nil
     @State private var isAnalyzingPDF = false
     @State private var showDeletePrompt = false
     @State private var originalPDFPath: String?
@@ -66,7 +66,7 @@ struct ContentView: View {
             case .table:
                 DatabaseView()
             case .chat:
-                ChatModeView() // Dummy for now
+                ChatModeView()
             }
         }
         .navigationTitle("Paper Manager")
@@ -125,7 +125,7 @@ struct ContentView: View {
         .alert(item: $errorMessage) { msg in
             Alert(
                 title: Text("Error"),
-                message: Text(msg),
+                message: Text(msg.message),
                 dismissButton: .default(Text("OK")) { errorMessage = nil }
             )
         }
@@ -210,7 +210,7 @@ struct ContentView: View {
         } catch {
             print("[copyAndProcessPDF] Error copying PDF: \(error)")
             DispatchQueue.main.async {
-                self.errorMessage = "Failed to copy PDF: \(error.localizedDescription)"
+                self.errorMessage = ErrorMessage(message: "Failed to copy PDF: \(error.localizedDescription)")
                 self.analyzingCount = max(0, self.analyzingCount - 1)
             }
             return
@@ -220,7 +220,7 @@ struct ContentView: View {
         var didError = false
         await PDFProcessor.shared.processPDF(at: targetURL, onError: { msg in
             DispatchQueue.main.async {
-                self.errorMessage = msg
+                self.errorMessage = ErrorMessage(message: msg)
                 print("[copyAndProcessPDF] Error: \(msg)")
                 didError = true
                 self.analyzingCount = max(0, self.analyzingCount - 1)
@@ -504,12 +504,103 @@ struct DatabaseView: View {
 }
 
 struct ChatModeView: View {
+    @Environment(\.managedObjectContext) private var viewContext
+    @State private var query: String = ""
+    @State private var chatHistory: [(String, [NSManagedObject])] = []
+    @State private var isSearching = false
+
     var body: some View {
         VStack {
-            Text("Chat Mode (Coming Soon)")
-                .font(.title)
-                .padding()
-            Spacer()
+            HStack {
+                Text("Chat Mode").font(.title2).bold()
+                Spacer()
+                Button("Clear History") {
+                    chatHistory.removeAll()
+                }
+                .disabled(chatHistory.isEmpty)
+            }
+            .padding(.bottom, 4)
+            Divider()
+            ScrollView {
+                ForEach(Array(chatHistory.enumerated()), id: \.offset) { idx, entry in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("You: \(entry.0)").bold()
+                            Spacer()
+                            Button(action: { chatHistory.remove(at: idx) }) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
+                        }
+                        if entry.1.isEmpty {
+                            Text("No matching papers found.").italic()
+                        } else {
+                            ForEach(entry.1, id: \.objectID) { paper in
+                                Text(paper.value(forKey: "name") as? String ?? "Untitled")
+                                    .font(.headline)
+                                Text(paper.value(forKey: "summary") as? String ?? "")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+            Divider()
+            HStack {
+                TextField("Ask about your papers...", text: $query)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .disabled(isSearching)
+                Button("Send") {
+                    Task { await runQuery() }
+                }
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
+            }
+            .padding()
         }
+        .padding()
+    }
+
+    func runQuery() async {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isSearching = true
+        defer { isSearching = false }
+        // Generate embedding for query
+        let queryEmbedding: [Float]
+        do {
+            queryEmbedding = try await PDFProcessor.shared.generateEmbedding(for: query)
+        } catch {
+            chatHistory.append((query, []))
+            query = ""
+            return
+        }
+        // Fetch all papers with embeddings
+        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "Paper")
+        fetchRequest.predicate = NSPredicate(format: "embedding != nil")
+        let papers = (try? viewContext.fetch(fetchRequest)) ?? []
+        // Compute similarity
+        let scored = papers.compactMap { paper -> (NSManagedObject, Float)? in
+            guard let data = paper.value(forKey: "embedding") as? Data else { return nil }
+            let count = data.count / MemoryLayout<Float>.size
+            let arr = data.withUnsafeBytes { ptr in
+                Array(UnsafeBufferPointer<Float>(start: ptr.baseAddress!.assumingMemoryBound(to: Float.self), count: count))
+            }
+            guard arr.count == queryEmbedding.count else { return nil }
+            let sim = cosineSimilarity(arr, queryEmbedding)
+            return (paper, sim)
+        }
+        let topPapers = scored.sorted { $0.1 > $1.1 }.prefix(3).map { $0.0 }
+        chatHistory.append((query, Array(topPapers)))
+        query = ""
+    }
+
+    func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+        let dot = zip(a, b).map(*).reduce(0, +)
+        let normA = sqrt(a.map { $0 * $0 }.reduce(0, +))
+        let normB = sqrt(b.map { $0 * $0 }.reduce(0, +))
+        return dot / (normA * normB + 1e-8)
     }
 } 
