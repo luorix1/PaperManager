@@ -23,19 +23,39 @@ if [[ ! -d "$FRAMEWORK_SRC" ]]; then
     exit 1
 fi
 
-echo "📦 Copying $FRAMEWORK_NAME into .app bundle..."
-
+# Remove any existing framework and create destination directory
 mkdir -p "$APP_PATH/Contents/Frameworks"
 rm -rf "$FRAMEWORK_DST"
-rsync -a --copy-links "$FRAMEWORK_SRC" "$FRAMEWORK_DST"
+mkdir -p "$FRAMEWORK_DST"
 
-echo "🔗 Fixing framework symlinks..."
+# Copy the contents of the framework, not the directory itself
+rsync -a "$FRAMEWORK_SRC/" "$FRAMEWORK_DST/"
+
+# Ensure Versions/A exists before making symlinks
+if [[ ! -d "$FRAMEWORK_DST/Versions/A" ]]; then
+    echo "❌ Error: $FRAMEWORK_DST/Versions/A does not exist after copy."
+    exit 1
+fi
 
 cd "$FRAMEWORK_DST"
+
+# Remove old symlinks if they exist
 rm -f llama Resources Versions/Current
-ln -s Versions/A/llama llama
-ln -s Versions/A/Resources Resources
+
+# Create symlinks only if the targets exist
+if [[ -f Versions/A/llama ]]; then
+    ln -s Versions/A/llama llama
+else
+    echo "⚠️  Warning: Versions/A/llama does not exist. Skipping symlink."
+fi
+if [[ -d Versions/A/Resources ]]; then
+    ln -s Versions/A/Resources Resources
+else
+    echo "⚠️  Warning: Versions/A/Resources does not exist. Skipping symlink."
+fi
 ln -s A Versions/Current
+
+cd - > /dev/null
 
 echo "🔧 Adding rpath to binary..."
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$EXECUTABLE"
