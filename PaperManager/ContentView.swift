@@ -6,6 +6,7 @@ import AppKit
 struct ContentView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var filterType: FilterType = .name
     @State private var selectedPaperID: NSManagedObjectID? = nil {
         didSet {
@@ -27,6 +28,7 @@ struct ContentView: View {
         case authors = "Authors"
         case publication = "Publication"
         case year = "Year"
+        case text = "Text Search"
     }
     
     enum AppMode: String, CaseIterable {
@@ -56,7 +58,10 @@ struct ContentView: View {
             switch appMode {
             case .list:
                 NavigationSplitView {
-                    PaperListView(searchText: $searchText, filterType: $filterType, selectedPaperID: $selectedPaperID)
+                    PaperListView(searchText: $searchText, 
+                                debouncedSearchText: $debouncedSearchText,
+                                filterType: $filterType, 
+                                selectedPaperID: $selectedPaperID)
                 } detail: {
                     if let paperID = selectedPaperID {
                         PaperDetailView(paperID: paperID)
@@ -112,6 +117,15 @@ struct ContentView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter by \(filterType.rawValue)")
+        .onChange(of: searchText) { newValue in
+            // Debounce the search text changes
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms delay
+                await MainActor.run {
+                    debouncedSearchText = newValue
+                }
+            }
+        }
         .alert("Are you sure you want to delete this paper?", isPresented: $showDeleteConfirmation, presenting: selectedPaperID) { paperID in
             Button("Yes", role: .destructive) {
                 if let paper = fetchPaper(with: paperID) {
@@ -255,6 +269,7 @@ struct ContentView: View {
 struct PaperListView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Binding var searchText: String
+    @Binding var debouncedSearchText: String
     @Binding var filterType: ContentView.FilterType
     @Binding var selectedPaperID: NSManagedObjectID?
     
@@ -265,19 +280,34 @@ struct PaperListView: View {
     private var papers: FetchedResults<NSManagedObject>
     
     var filteredPapers: [NSManagedObject] {
-        guard !searchText.isEmpty else { return Array(papers) }
+        guard !debouncedSearchText.isEmpty else { return Array(papers) }
         
         return papers.filter { paper in
             switch filterType {
             case .name:
-                return (paper.value(forKey: "name") as? String)?.localizedCaseInsensitiveContains(searchText) ?? false
+                return (paper.value(forKey: "name") as? String)?.localizedCaseInsensitiveContains(debouncedSearchText) ?? false
             case .authors:
-                return (paper.value(forKey: "authors") as? String)?.localizedCaseInsensitiveContains(searchText) ?? false
+                return (paper.value(forKey: "authors") as? String)?.localizedCaseInsensitiveContains(debouncedSearchText) ?? false
             case .publication:
-                return (paper.value(forKey: "publication") as? String)?.localizedCaseInsensitiveContains(searchText) ?? false
+                return (paper.value(forKey: "publication") as? String)?.localizedCaseInsensitiveContains(debouncedSearchText) ?? false
             case .year:
-                guard let yearStr = Int16(searchText) else { return false }
+                guard let yearStr = Int16(debouncedSearchText) else { return false }
                 return (paper.value(forKey: "year") as? Int16) == yearStr
+            case .text:
+                guard let filePath = paper.value(forKey: "filePath") as? String,
+                      let pdfDocument = PDFDocument(url: URL(fileURLWithPath: filePath)) else {
+                    return false
+                }
+                // Search through the PDF content
+                let searchString = debouncedSearchText.lowercased()
+                for i in 0..<pdfDocument.pageCount {
+                    if let page = pdfDocument.page(at: i),
+                       let pageText = page.string?.lowercased(),
+                       pageText.contains(searchString) {
+                        return true
+                    }
+                }
+                return false
             }
         }
     }
@@ -310,8 +340,14 @@ struct PaperListView: View {
                                 .font(.caption2)
                                 .foregroundColor(.gray)
                         }
-                        Text(paper.value(forKey: "name") as? String ?? "Untitled")
-                            .font(.headline)
+                        HStack {
+                            Text(paper.value(forKey: "name") as? String ?? "Untitled")
+                                .font(.headline)
+                            if filterType == .text && !debouncedSearchText.isEmpty {
+                                Image(systemName: "text.magnifyingglass")
+                                    .foregroundColor(.blue)
+                            }
+                        }
                         Text(paper.value(forKey: "authors") as? String ?? "Unknown authors")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -336,11 +372,46 @@ struct PaperDetailView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @State private var paper: NSManagedObject?
     @State private var pdfDocument: PDFDocument?
-
+    @State private var currentMatchIndex: Int = 0
+    @State private var totalMatches: Int = 0
+    @State private var searchText: String = ""
+    
     var body: some View {
         VStack {
             if let pdfDocument = pdfDocument {
-                PDFKitView(document: pdfDocument)
+                HStack {
+                    TextField("Search in PDF...", text: $searchText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 200)
+                    
+                    if totalMatches > 0 {
+                        Text("\(currentMatchIndex + 1) of \(totalMatches)")
+                            .foregroundColor(.secondary)
+                        
+                        Button(action: { 
+                            currentMatchIndex = (currentMatchIndex - 1 + totalMatches) % totalMatches 
+                        }) {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(totalMatches == 0)
+                        
+                        Button(action: { 
+                            currentMatchIndex = (currentMatchIndex + 1) % totalMatches 
+                        }) {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(totalMatches == 0)
+                    }
+                }
+                .padding(.horizontal)
+                
+                PDFKitView(
+                    document: pdfDocument,
+                    searchText: searchText,
+                    currentMatchIndex: $currentMatchIndex,
+                    totalMatches: $totalMatches
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("PDF not found")
                     .foregroundColor(.secondary)
@@ -350,8 +421,11 @@ struct PaperDetailView: View {
         .onChange(of: paperID) { _ in
             loadPaper()
         }
+        .onChange(of: searchText) { _ in
+            currentMatchIndex = 0
+        }
     }
-
+    
     private func loadPaper() {
         if let fetchedPaper = try? viewContext.existingObject(with: paperID),
            let path = fetchedPaper.value(forKey: "filePath") as? String {
@@ -368,16 +442,109 @@ struct PDFKitView: NSViewRepresentable {
     typealias NSViewType = PDFView
 
     let document: PDFDocument
-
+    let searchText: String
+    @Binding var currentMatchIndex: Int
+    @Binding var totalMatches: Int
+    
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.document = document
         pdfView.autoScales = true
+        pdfView.displayMode = .singlePage
+        pdfView.displayDirection = .vertical
+        pdfView.minScaleFactor = 1.0
+        pdfView.maxScaleFactor = 4.0
+        pdfView.scaleFactor = 1.0
+        
         return pdfView
     }
 
     func updateNSView(_ nsView: PDFView, context: Context) {
         nsView.document = document
+        
+        // Clear all highlight annotations from all pages
+        for i in 0..<document.pageCount {
+            if let page = document.page(at: i) {
+                let highlights = page.annotations.filter { $0.annotationKeyValues[PDFAnnotationKey.subtype] as? String == PDFAnnotationSubtype.highlight.rawValue || $0.type == PDFAnnotationSubtype.highlight.rawValue }
+                for annotation in highlights {
+                    page.removeAnnotation(annotation)
+                }
+            }
+        }
+        
+        // If there's search text, highlight all matches
+        if !searchText.isEmpty {
+            let searchString = searchText.lowercased()
+            var matches: [PDFSelection] = []
+            
+            // Search through all pages
+            for i in 0..<document.pageCount {
+                if let page = document.page(at: i) {
+                    let selections = document.findString(searchString, withOptions: [])
+                    for selection in selections {
+                        // Create a highlight annotation for each match
+                        let bounds = selection.bounds(for: page)
+                        
+                        // Safety check for valid bounds
+                        guard bounds.width > 0 && bounds.height > 0,
+                              !bounds.isInfinite,
+                              !bounds.origin.x.isNaN && !bounds.origin.y.isNaN &&
+                              !bounds.width.isNaN && !bounds.height.isNaN else {
+                            continue
+                        }
+                        
+                        // Ensure bounds are within page bounds
+                        let pageBounds = page.bounds(for: .mediaBox)
+                        let safeBounds = CGRect(
+                            x: max(0, min(bounds.minX, pageBounds.width)),
+                            y: max(0, min(bounds.minY, pageBounds.height)),
+                            width: min(bounds.width, pageBounds.width - bounds.minX),
+                            height: min(bounds.height, pageBounds.height - bounds.minY)
+                        )
+                        
+                        matches.append(selection)
+                    }
+                }
+            }
+            
+            totalMatches = matches.count
+            
+            // Add highlights: yellow for all, orange for current
+            for (idx, selection) in matches.enumerated() {
+                for page in selection.pages {
+                    let bounds = selection.bounds(for: page)
+                    // Safety check for valid bounds
+                    guard bounds.width > 0 && bounds.height > 0,
+                          !bounds.isInfinite,
+                          !bounds.origin.x.isNaN && !bounds.origin.y.isNaN &&
+                          !bounds.width.isNaN && !bounds.height.isNaN else {
+                        continue
+                    }
+                    let pageBounds = page.bounds(for: .mediaBox)
+                    let safeBounds = CGRect(
+                        x: max(0, min(bounds.minX, pageBounds.width)),
+                        y: max(0, min(bounds.minY, pageBounds.height)),
+                        width: min(bounds.width, pageBounds.width - bounds.minX),
+                        height: min(bounds.height, pageBounds.height - bounds.minY)
+                    )
+                    let highlight = PDFAnnotation(bounds: safeBounds, forType: .highlight, withProperties: nil)
+                    highlight.color = (idx == currentMatchIndex) ? NSColor.orange : NSColor.yellow
+                    page.addAnnotation(highlight)
+                }
+            }
+            
+            // Navigate to the current match
+            if !matches.isEmpty && currentMatchIndex < matches.count {
+                let selection = matches[currentMatchIndex]
+                if let page = selection.pages.first {
+                    nsView.go(to: page)
+                    nsView.go(to: selection)
+                }
+            }
+        } else {
+            totalMatches = 0
+            currentMatchIndex = 0
+        }
     }
 }
 
